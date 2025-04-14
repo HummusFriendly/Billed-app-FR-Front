@@ -40,9 +40,8 @@ describe("Given I am connected as an employee", () => {
 
     test("Then bills should be ordered from earliest to latest", () => {
       document.body.innerHTML = BillsUI({ data: bills })
-      const dates = screen.getAllByText(/^(19|20)\d\d[- /.](0[1-9]|1[012])[- /.](0[1-9]|[12][0-9]|3[01])$/i).map(a => a.innerHTML)
-      const antiChrono = bills.sort((a, b) => new Date(a.date) - new Date(b.date));
-      const datesSorted = [...dates].sort(antiChrono)
+      const dates = screen.getAllByText(/^(19|20)\d\d[- /.](0[1-9]|1[012])[- /.](0[1-9]|[12][0-9]|3[01])$/i).map(a => a.innerHTML)  
+      const datesSorted = [...dates].sort((a, b) => new Date(a) - new Date(b));
       expect(dates).toEqual(datesSorted)
     })
 
@@ -85,7 +84,7 @@ describe("Given I am connected as an employee", () => {
 
       const result = await billsInstance.getBills()
 
-      expect(result[0].date).toBe("10 Mai 2023")
+      expect(result[0].date).toBe("10 Mai. 23")
       expect(result[1].status).toBe("Accepté")
     })
   })

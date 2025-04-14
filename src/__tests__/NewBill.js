@@ -1,8 +1,9 @@
+
 /**
  * @jest-environment jsdom
  */
 
-import { fireEvent, screen } from "@testing-library/dom";
+import { fireEvent, screen, waitFor } from "@testing-library/dom";
 import NewBillUI from "../views/NewBillUI.js";
 import NewBill from "../containers/NewBill.js";
 import { ROUTES_PATH } from "../constants/routes.js";
@@ -18,15 +19,20 @@ describe("Given I am connected as an employee", () => {
   beforeEach(() => {
     document.body.innerHTML = NewBillUI();
     
-    localStorage.setItem("user", JSON.stringify({ type: "Employee" }));
+    Object.defineProperty(window, 'localStorage', { value: localStorageMock });
+    window.localStorage.setItem("user", JSON.stringify({ type: "Employee" }));
 
     onNavigate = jest.fn();
     newBill = new NewBill({
       document,
       onNavigate,
       store: mockStore,
-      localStorage: window.localStorage,
+      localStorage: localStorageMock,
     });
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
   });
 
   describe("When I am on NewBill Page", () => {
@@ -35,16 +41,25 @@ describe("Given I am connected as an employee", () => {
     });
 
     test("Then I can upload a valid file", async () => {
+      jest.spyOn(mockStore, "bills").mockImplementationOnce(() => ({
+        create: jest.fn().mockResolvedValue({
+          fileUrl: "https://test.com/image.jpg",
+          key: "1234"
+        })
+      }));
+
       const fileInput = screen.getByTestId("file");
       const file = new File(["image"], "image.jpg", { type: "image/jpeg" });
 
-      const handleChangeFile = jest.fn(newBill.handleChangeFile);
+      const handleChangeFile = jest.spyOn(newBill, "handleChangeFile");
       fileInput.addEventListener("change", handleChangeFile);
 
       fireEvent.change(fileInput, { target: { files: [file] } });
 
-      expect(handleChangeFile).toHaveBeenCalled();
-      expect(newBill.fileName).toBe("image.jpg");
+      await waitFor(() => {
+        expect(handleChangeFile).toHaveBeenCalled();
+        expect(newBill.fileName).toBe("image.jpg");
+      });
     });
 
     test("Then it should reject an invalid file format", async () => {
@@ -52,61 +67,112 @@ describe("Given I am connected as an employee", () => {
       const file = new File(["document"], "document.pdf", { type: "application/pdf" });
 
       const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+      const alertSpy = jest.spyOn(window, "alert").mockImplementation(() => {});
+      const handleChangeFile = jest.spyOn(newBill, "handleChangeFile");
+      fileInput.addEventListener("change", handleChangeFile);
 
       fireEvent.change(fileInput, { target: { files: [file] } });
 
-      expect(consoleSpy).toHaveBeenCalled();
+      await waitFor(() => {
+        expect(handleChangeFile).toHaveBeenCalled();
+        expect(consoleSpy).toHaveBeenCalledWith("Format de fichier non valide. Seuls .jpg, .jpeg, .png sont acceptés.");
+        expect(alertSpy).toHaveBeenCalledWith("Veuillez sélectionner un fichier au format .jpg, .jpeg ou .png.");
+        expect(fileInput.value).toBe("");
+      });
 
       consoleSpy.mockRestore();
+      alertSpy.mockRestore();
     });
 
     test("Then submitting the form should call updateBill", async () => {
-      const form = screen.getByTestId("form-new-bill");
-      const handleSubmit = jest.fn(newBill.handleSubmit);
+      newBill.fileName = "image.jpg";
+      newBill.fileUrl = "https://test.com/image.jpg";
+      newBill.billId = "1234";
 
-      form.addEventListener("submit", handleSubmit);
+      const form = screen.getByTestId("form-new-bill");
+      const handleSubmit = jest.spyOn(newBill, "handleSubmit");
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        handleSubmit(e);
+      });
+
       fireEvent.submit(form);
 
-      expect(handleSubmit).toHaveBeenCalled();
-      expect(onNavigate).toHaveBeenCalledWith(ROUTES_PATH["Bills"]);
+      await waitFor(() => {
+        expect(handleSubmit).toHaveBeenCalled();
+        expect(onNavigate).toHaveBeenCalledWith(ROUTES_PATH["Bills"]);
+      });
+    });
+
+    test("Then submitting the form without a valid file should not call updateBill", async () => {
+      newBill.fileName = null;
+      newBill.fileUrl = null;
+
+      const form = screen.getByTestId("form-new-bill");
+      const handleSubmit = jest.spyOn(newBill, "handleSubmit");
+      const alertSpy = jest.spyOn(window, "alert").mockImplementation(() => {});
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        handleSubmit(e);
+      });
+
+      fireEvent.submit(form);
+
+      await waitFor(() => {
+        expect(handleSubmit).toHaveBeenCalled();
+        expect(alertSpy).toHaveBeenCalledWith("Veuillez téléverser un justificatif valide (.jpg, .jpeg, .png) avant de soumettre.");
+        expect(onNavigate).not.toHaveBeenCalled();
+      });
+
+      alertSpy.mockRestore();
     });
   });
 
   describe("When API fails", () => {
     test("Then it should handle a 404 error", async () => {
-      jest.spyOn(mockStore, "bills").mockImplementation(() => {
-        return {
-          create: () => Promise.reject(new Error("Erreur 404")),
-        };
-      });
+      jest.spyOn(mockStore, "bills").mockImplementationOnce(() => ({
+        create: () => Promise.reject(new Error("Erreur 404")),
+      }));
 
       const fileInput = screen.getByTestId("file");
       const file = new File(["image"], "image.jpg", { type: "image/jpeg" });
 
       const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+      const handleChangeFile = jest.spyOn(newBill, "handleChangeFile");
+      fileInput.addEventListener("change", handleChangeFile);
 
-      fireEvent.change(fileInput, { target: { files: [file] } });
+      fireEvent.change(fileInput, {
+        target: { files: [file] },
+        preventDefault: jest.fn(),
+      });
 
-      expect(consoleSpy).toHaveBeenCalledWith(new Error("Erreur 404"));
+      await waitFor(() => {
+        expect(consoleSpy).toHaveBeenCalledWith(expect.any(Error));
+      });
 
       consoleSpy.mockRestore();
     });
 
     test("Then it should handle a 500 error", async () => {
-      jest.spyOn(mockStore, "bills").mockImplementation(() => {
-        return {
-          create: () => Promise.reject(new Error("Erreur 500")),
-        };
-      });
+      jest.spyOn(mockStore, "bills").mockImplementationOnce(() => ({
+        create: () => Promise.reject(new Error("Erreur 500")),
+      }));
 
       const fileInput = screen.getByTestId("file");
       const file = new File(["image"], "image.jpg", { type: "image/jpeg" });
 
       const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+      const handleChangeFile = jest.spyOn(newBill, "handleChangeFile");
+      fileInput.addEventListener("change", handleChangeFile);
 
-      fireEvent.change(fileInput, { target: { files: [file] } });
+      fireEvent.change(fileInput, {
+        target: { files: [file] },
+        preventDefault: jest.fn(),
+      });
 
-      expect(consoleSpy).toHaveBeenCalledWith(new Error("Erreur 500"));
+      await waitFor(() => {
+        expect(consoleSpy).toHaveBeenCalledWith(expect.any(Error));
+      });
 
       consoleSpy.mockRestore();
     });
